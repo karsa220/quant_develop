@@ -18,8 +18,10 @@
 
 ifeq ($(OS),Windows_NT)
   BIN_EXT := .exe
+  LIBS    := -lws2_32
 else
   BIN_EXT :=
+  LIBS    :=
 endif
 
 CXX      ?= clang++
@@ -28,10 +30,11 @@ BUILD    := build
 
 SRC_IPC  := src/ipc/SpscRingBuffer.cpp src/shm/ShmSegment.cpp src/sched/PeriodicTimer.cpp
 SRC_FEED := src/feed/FuturesFeed.cpp src/feed/CtpLikeCodec.cpp
+SRC_NET  := src/net/Socket.cpp src/net/MdReceiver.cpp src/net/PacketCapture.cpp src/net/MdServer.cpp
 
-.PHONY: all test bench demo gateway strategy sched clean
+.PHONY: all test bench demo gateway strategy sched net nettest clean
 
-all: test bench demo gateway strategy sched
+all: test bench demo gateway strategy sched net nettest
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -54,6 +57,12 @@ $(BUILD)/strategy_main$(BIN_EXT): src/strategy_main.cpp src/strategy/TickConsume
 $(BUILD)/sched_main$(BIN_EXT): src/sched_main.cpp $(SRC_IPC) | $(BUILD)
 	$(CXX) $(CXXFLAGS) src/sched_main.cpp $(SRC_IPC) -o $@
 
+$(BUILD)/net_demo$(BIN_EXT): src/net_demo.cpp $(SRC_NET) $(SRC_FEED) $(SRC_IPC) | $(BUILD)
+	$(CXX) $(CXXFLAGS) src/net_demo.cpp $(SRC_NET) $(SRC_FEED) $(SRC_IPC) $(LIBS) -o $@
+
+$(BUILD)/test_net$(BIN_EXT): tests/test_net.cpp $(SRC_NET) $(SRC_FEED) $(SRC_IPC) | $(BUILD)
+	$(CXX) $(CXXFLAGS) tests/test_net.cpp $(SRC_NET) $(SRC_FEED) $(SRC_IPC) $(LIBS) -o $@
+
 test: $(BUILD)/test_system$(BIN_EXT)
 	./$<
 
@@ -66,6 +75,9 @@ demo: $(BUILD)/demo_pipeline$(BIN_EXT)
 gateway: $(BUILD)/gateway_main$(BIN_EXT)
 strategy: $(BUILD)/strategy_main$(BIN_EXT)
 sched: $(BUILD)/sched_main$(BIN_EXT)
+net: $(BUILD)/net_demo$(BIN_EXT)
+nettest: $(BUILD)/test_net$(BIN_EXT)
+	./$<
 
 clean:
 	rm -rf $(BUILD)

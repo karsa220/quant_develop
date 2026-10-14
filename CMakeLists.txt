@@ -24,11 +24,20 @@ set(IPC_SRC
 set(FEED_SRC
     src/feed/FuturesFeed.cpp
     src/feed/CtpLikeCodec.cpp)
+set(NET_SRC
+    src/net/Socket.cpp
+    src/net/MdReceiver.cpp
+    src/net/PacketCapture.cpp
+    src/net/MdServer.cpp)
 
 # 单元测试
 add_executable(test_system tests/test_system.cpp ${IPC_SRC} ${FEED_SRC})
 enable_testing()
 add_test(NAME unit_tests COMMAND test_system)
+
+# 网络层 / 抓包 / 多接口 单元测试
+add_executable(test_net tests/test_net.cpp ${NET_SRC} ${FEED_SRC} ${IPC_SRC})
+add_test(NAME net_tests COMMAND test_net)
 
 # 性能基准：无锁 SPSC ring vs 互斥队列
 add_executable(bench_main src/bench_main.cpp ${IPC_SRC} ${FEED_SRC})
@@ -54,3 +63,15 @@ add_executable(strategy_main
 
 # Linux 定时任务演示（09:30/15:00 会话 + 心跳）
 add_executable(sched_main src/sched_main.cpp ${IPC_SRC})
+
+# 网络层端到端演示：网络采集 / 抓包 / TCP·HTTP·UDP 三种数据接口
+add_executable(net_demo
+    src/net_demo.cpp
+    ${NET_SRC} ${FEED_SRC} ${IPC_SRC})
+
+# Windows 需要链接 Winsock2
+if(WIN32)
+  foreach(t net_demo test_net)
+    target_link_libraries(${t} ws2_32)
+  endforeach()
+endif()

@@ -56,6 +56,18 @@ C++17 零依赖实现的低延迟行情链路：**行情采集 → 网关编码 
 ### 6. 百分位延迟度量
 - `LatencyRecorder` 记录 p50/p90/p99/p99.9（不看平均），端到端 tick→signal **p50 200ns / p99 1.35ms**。
 
+### 7. 网络层：C++ 网络编程 / 抓包 / 多协议数据接口
+真实行情系统里，行情从网卡进来，要经「网络收包 → 解析 → 入环 → 对外暴露」整条链路。本项目 `net/` 模块把这一层也做出来：
+
+- **行情网络采集（`MdReceiver`）**：UDP（组播/单播）/ TCP 接收「内部线格式消息」(`MsgHeader+TickPayload`)，解析为 `MarketTick` 后发布到 `SpscRingBuffer` 或触发回调；这正是期货公司网关「网络收包 → 入环」的入口。
+- **链路层抓包（`PcapCapture`）**：Linux `AF_PACKET(SOCK_RAW)` / Windows 原始套接字 + `SIO_RCVALL` 抓以太网/IPv4/UDP 报文，逐层解析出行情载荷；用于延迟核对、原始报文留痕、合规。无权限时优雅降级（解析逻辑由单测独立覆盖）。
+- **多协议数据接口（`MdServer`）**：同一份行情向不同消费方提供三种接口——
+  - **TCP 二进制流**（`:9001`，面向低延迟 C++ 客户端，直接发线格式消息）；
+  - **HTTP REST/JSON**（`:8080`，`GET /snapshot`、`GET /book?sym=IF`，面向研究/Python）；
+  - **UDP 组播**（`:9002`→`239.1.1.1`，面向多订阅者 fan-out，交易所行情经典模型）。
+
+网络层与采集层、共享内存层解耦：都从同一份 `MarketTick` 派生，互不阻塞。
+
 ---
 
 ## 实测（Release -O2，本机）
@@ -67,19 +79,26 @@ C++17 零依赖实现的低延迟行情链路：**行情采集 → 网关编码 
 | 互斥队列 mutex+deque | 0.99 M msg/s，p50=103µs，p99=2.05ms（对照） |
 | 进程内链路 | 21.5M ticks、0 丢弃、5.37M ticks/s，tick→signal p50=200ns / p99=1.35ms |
 | 跨进程 mmap | 13,236,632 发布 = 13,236,632 消费，零丢失 |
-| 单测 | 985,044 次断言全过 |
+| 网络层回环 | UDP 80k+ 报文收发、0 坏帧、ring 0 丢弃；HTTP `/snapshot` 返回正确 JSON |
+| 单测 | 985,044 次断言全过 + 网络层 23 项断言全过 |
 
 ---
 
 ## 构建与运行
 
 ```bash
-make            # 构建全部；make test / bench / demo / sched
+make            # 构建全部；make test / bench / demo / sched / net / nettest
 # 或 CMake: cmake -S . -B build && cmake --build build && ctest --test-dir build
 
 # 跨进程演示（两个终端）
 ./build/gateway_main /md_xprocess 262144 4000
 ./build/strategy_main /md_xprocess 4000
+
+# 网络层端到端演示（网络采集 / 抓包 / TCP·HTTP·UDP 三接口）
+./build/net_demo
+curl http://127.0.0.1:8080/snapshot        # 看 REST 接口
+curl http://127.0.0.1:8080/book?sym=IF     # 看单合约
+./build/test_net                           # 网络层单测
 ```
 > 本机无原生 C++ 编译器时用 `make CXX="python -m ziglang c++"`（zig 内置 clang）。
 
@@ -88,11 +107,13 @@ make            # 构建全部；make test / bench / demo / sched
 ## 目录
 
 ```
-include/  common(Types) shm(SpscRingBuffer 所在 mmap) ipc(SpscRingBuffer)
+include/  common(Types) shm(mmap) ipc(SpscRingBuffer)
           feed(FuturesFeed,CtpLikeCodec) sched(PeriodicTimer) bench(LatencyRecorder)
           gateway(MdGateway) strategy(TickConsumer)
-src/      demo_pipeline gateway_main strategy_main bench_main sched_main
-tests/    test_system.cpp
+          net(Socket,MdReceiver,PacketCapture,MdServer,WireParse,JsonBook)
+src/      demo_pipeline gateway_main strategy_main bench_main sched_main net_demo
+          net/(Socket,MdReceiver,PacketCapture,MdServer).cpp
+tests/    test_system.cpp  test_net.cpp
 scripts/  md-gateway.service  daily_snapshot.cron  snapshot.sh
 docs/     quant-knowledge-checklist.md（金融/统计/C++ 工程面试知识）
 ```
