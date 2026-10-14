@@ -44,6 +44,8 @@ long     udp_recv(sockfd_t fd, void* buf, size_t cap);
 // ---- TCP ----
 sockfd_t tcp_listen(uint16_t port, int backlog = 8);
 sockfd_t tcp_accept(sockfd_t listenFd);
+// 非阻塞 accept：仅在已由 IoMultiplexer 确认可读后调用，不会阻塞
+sockfd_t tcp_accept_nowait(sockfd_t listenFd);
 sockfd_t tcp_connect(const char* host, uint16_t port);
 bool     tcp_send(sockfd_t fd, const void* data, size_t len);
 long     tcp_recv(sockfd_t fd, void* buf, size_t cap);

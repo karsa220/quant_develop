@@ -137,6 +137,15 @@ sockfd_t tcp_accept(sockfd_t listenFd) {
   return c;
 }
 
+sockfd_t tcp_accept_nowait(sockfd_t listenFd) {
+  // 仅在已由 IoMultiplexer 确认可读后调用，不会阻塞
+  sockaddr_in from{};
+  socklen_t fl = sizeof(from);
+  sockfd_t c = accept(listenFd, (sockaddr*)&from, &fl);
+  if (c != MD_INVALID_SOCKET) set_recv_timeout(c, 500);
+  return c;
+}
+
 sockfd_t tcp_connect(const char* host, uint16_t port) {
   sockfd_t fd = socket(AF_INET, SOCK_STREAM, 0);
   if (fd == MD_INVALID_SOCKET) return MD_INVALID_SOCKET;

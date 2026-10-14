@@ -28,7 +28,12 @@ set(NET_SRC
     src/net/Socket.cpp
     src/net/MdReceiver.cpp
     src/net/PacketCapture.cpp
-    src/net/MdServer.cpp)
+    src/net/MdServer.cpp
+    src/net/IoMultiplexer.cpp)
+set(GW_SRC   src/gateway/MdGateway.cpp)
+set(STRAT_SRC src/strategy/TickConsumer.cpp)
+set(RISK_SRC src/risk/RiskControl.cpp)
+set(MON_SRC  src/monitor/Monitor.cpp)
 
 # 单元测试
 add_executable(test_system tests/test_system.cpp ${IPC_SRC} ${FEED_SRC})
@@ -39,27 +44,32 @@ add_test(NAME unit_tests COMMAND test_system)
 add_executable(test_net tests/test_net.cpp ${NET_SRC} ${FEED_SRC} ${IPC_SRC})
 add_test(NAME net_tests COMMAND test_net)
 
+# 端到端集成测试：风控 + 监控 + 背压 + 看门狗 + 对象池
+add_executable(test_integration
+    tests/test_integration.cpp
+    ${GW_SRC} ${STRAT_SRC} ${RISK_SRC} ${MON_SRC} ${FEED_SRC} ${IPC_SRC})
+add_test(NAME integration_tests COMMAND test_integration)
+
 # 性能基准：无锁 SPSC ring vs 互斥队列
 add_executable(bench_main src/bench_main.cpp ${IPC_SRC} ${FEED_SRC})
 
 # 进程内完整数据链路演示
 add_executable(demo_pipeline
     src/demo_pipeline.cpp
-    src/gateway/MdGateway.cpp
-    src/strategy/TickConsumer.cpp
-    ${FEED_SRC} ${IPC_SRC})
+    ${GW_SRC} ${STRAT_SRC}
+    ${FEED_SRC} ${IPC_SRC} ${RISK_SRC} ${MON_SRC})
 
 # 跨进程：行情网关（生产者）
 add_executable(gateway_main
     src/gateway_main.cpp
-    src/gateway/MdGateway.cpp
+    ${GW_SRC}
     ${FEED_SRC} ${IPC_SRC})
 
 # 跨进程：策略/执行进程（消费者）
 add_executable(strategy_main
     src/strategy_main.cpp
-    src/strategy/TickConsumer.cpp
-    ${FEED_SRC} ${IPC_SRC})
+    ${STRAT_SRC}
+    ${FEED_SRC} ${IPC_SRC} ${RISK_SRC} ${MON_SRC})
 
 # Linux 定时任务演示（09:30/15:00 会话 + 心跳）
 add_executable(sched_main src/sched_main.cpp ${IPC_SRC})

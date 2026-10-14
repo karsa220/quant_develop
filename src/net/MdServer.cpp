@@ -36,6 +36,8 @@ std::vector<BookRow> MdServer::snapshotRows() const {
 bool MdServer::startTcp(uint16_t port) {
   tcpFd_ = tcp_listen(port);
   if (tcpFd_ == MD_INVALID_SOCKET) return false;
+  muxTcp_.create();
+  muxTcp_.add(tcpFd_);
   hasTcp_ = true;
   tt_ = std::thread(&MdServer::tcpLoop, this);
   return true;
@@ -44,6 +46,8 @@ bool MdServer::startTcp(uint16_t port) {
 bool MdServer::startHttp(uint16_t port) {
   httpFd_ = tcp_listen(port);
   if (httpFd_ == MD_INVALID_SOCKET) return false;
+  muxHttp_.create();
+  muxHttp_.add(httpFd_);
   hasHttp_ = true;
   th_ = std::thread(&MdServer::httpLoop, this);
   return true;
@@ -68,9 +72,15 @@ void MdServer::joinAll() {
 }
 
 void MdServer::tcpLoop() {
+  std::vector<mux_fd_t> rr, rw;
   while (!stop_) {
-    sockfd_t c = tcp_accept(tcpFd_);
-    if (c == MD_INVALID_SOCKET) continue;   // 超时
+    // 用多路复用器等待监听口可读（Linux=epoll / Windows=WSAPoll），再非阻塞 accept
+    if (muxTcp_.wait(200, rr, rw) <= 0) continue;
+    bool ready = false;
+    for (auto f : rr) if (f == tcpFd_) { ready = true; break; }
+    if (!ready) continue;
+    sockfd_t c = tcp_accept_nowait(tcpFd_);
+    if (c == MD_INVALID_SOCKET) continue;
     tcpClients_++;
     auto rows = snapshotRows();
     for (auto& r : rows) {
@@ -86,8 +96,13 @@ void MdServer::tcpLoop() {
 }
 
 void MdServer::httpLoop() {
+  std::vector<mux_fd_t> rr, rw;
   while (!stop_) {
-    sockfd_t c = tcp_accept(httpFd_);
+    if (muxHttp_.wait(200, rr, rw) <= 0) continue;
+    bool ready = false;
+    for (auto f : rr) if (f == httpFd_) { ready = true; break; }
+    if (!ready) continue;
+    sockfd_t c = tcp_accept_nowait(httpFd_);
     if (c == MD_INVALID_SOCKET) continue;
     httpReqs_++;
     char buf[4096];

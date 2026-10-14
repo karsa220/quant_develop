@@ -20,6 +20,7 @@
 #include "common/Types.h"
 #include "net/Socket.h"
 #include "net/JsonBook.h"
+#include "net/IoMultiplexer.h"
 
 namespace md { namespace net {
 
@@ -44,6 +45,9 @@ public:
   uint64_t httpReqs()   const { return httpReqs_; }
   uint64_t udpSent()    const { return udpSent_; }
 
+  // I/O 多路复用后端名（Linux="epoll" / Windows="poll"），便于演示与文档
+  const char* ioBackend() const { return muxTcp_.backend(); }
+
   std::vector<BookRow> snapshotRows() const;
   std::string snapshotJson() const { return bookRowsToJson(snapshotRows()); }
 
@@ -63,6 +67,10 @@ private:
   std::atomic<uint64_t> tcpClients_{0}, httpReqs_{0}, udpSent_{0};
   std::thread tt_, th_, tu_;
   bool hasTcp_ = false, hasHttp_ = false, hasUdp_ = false;
+
+  // 每个监听口独立多路复用器（避免跨线程共享同一 mux 的就绪集合）
+  IoMultiplexer muxTcp_;
+  IoMultiplexer muxHttp_;
 };
 
 }}  // namespace md::net
