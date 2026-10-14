@@ -1,0 +1,26 @@
+# Build outputs
+build/
+out/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+*.exe
+*.pdb
+*.ilk
+*.obj
+*.o
+*.a
+*.lib
+*.so
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Python venv (not part of the C++ project)
+.venv/
+venv/
+__pycache__/

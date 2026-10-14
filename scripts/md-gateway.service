@@ -1,0 +1,36 @@
+# ============================================================================
+# md-gateway.service —— systemd 单元（Linux 生产部署：行情网关保活）
+#
+# 安装:
+#   sudo cp md-gateway.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now md-gateway
+#
+# 说明:
+#   - 行情网关作为常驻服务，崩了自动拉起（Restart=always），保证期货行情不中断；
+#   - 与策略进程通过命名共享内存(/dev/shm/md_xprocess)零拷贝通信；
+#   - 开盘/收盘由网关内部 timerfd 绝对定时触发（见 sched_main / MdGateway::maybeSession）。
+# ============================================================================
+[Unit]
+Description=Futures Market Data Gateway (low-latency shared-memory feed)
+After=network.target
+# 期货夜盘/早盘前确保先起；依赖 /dev/shm 可用
+Requires=local-fs.target
+
+[Service]
+Type=simple
+# 二进制路径按实际部署修改
+ExecStart=/opt/md-system/bin/gateway_main /md_xprocess 262144
+# 优雅退出：SIGTERM -> gateway 刷尾统计后退出
+KillSignal=SIGTERM
+TimeoutStopSec=10
+Restart=always
+RestartSec=2
+# 限制资源，避免异常时吃满机器
+MemoryMax=512M
+# 实时性：行情处理线程可绑定 CPU 并提升调度优先级（生产可选）
+# CPUSchedulingPolicy=rr
+# CPUSchedulingPriority=20
+
+[Install]
+WantedBy=multi-user.target

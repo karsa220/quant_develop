@@ -1,0 +1,21 @@
+# ============================================================================
+# daily_snapshot.cron —— 收盘快照 / 日终调度的 crontab（Linux 定时任务）
+#
+# 安装:
+#   crontab -l > /tmp/cur 2>/dev/null; cat scripts/daily_snapshot.cron >> /tmp/cur
+#   crontab /tmp/cur
+#   或:  sudo crontab scripts/daily_snapshot.cron   (系统级)
+#
+# 这里只演示「定时触发」这一层；真正的行情采集由 md-gateway.service 常驻完成，
+# 定时任务负责「会话边界」之外的运维动作：预开、收盘快照落地、平滑停止。
+# 行情网关内部 09:30/15:00 的会话切换由 timerfd 绝对定时完成（见 sched_main）。
+# ============================================================================
+
+# 每个交易日 09:25 预热：先于 09:30 开盘拉起网关，确保订阅与共享内存就绪
+25 9 * * 1-5  /opt/md-system/bin/gateway_main /md_xprocess 262144 >> /var/log/md/gateway.log 2>&1
+
+# 每个交易日 15:15 收盘后触发「日终快照 / rollup」落地（收盘快照）
+15 15 * * 1-5 /opt/md-system/scripts/snapshot.sh >> /var/log/md/snapshot.log 2>&1
+
+# 每个交易日 15:30 平滑停止网关（夜盘按需要另起；此处演示「定时停止」）
+30 15 * * 1-5  pkill -TERM -f 'gateway_main /md_xprocess' || true
