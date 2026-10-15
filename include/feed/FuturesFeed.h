@@ -64,6 +64,9 @@ public:
 
     const Instrument& instrument(size_t i) const { return inst_[i]; }
 
+    // 合约代码 → 内部 InstrumentId（找不到返回 kNumInstruments，表示未知合约）。
+    static InstrumentId symbolToId(const char* symbol);
+
 private:
     FastRng      rng_;
     Instrument   inst_[kNumInstruments];

@@ -37,6 +37,18 @@ BUILD    := build
 
 SRC_IPC  := src/ipc/SpscRingBuffer.cpp src/shm/ShmSegment.cpp src/sched/PeriodicTimer.cpp
 SRC_FEED := src/feed/FuturesFeed.cpp src/feed/CtpLikeCodec.cpp
+# 真实 CTP/飞马 feed 接入：统一接口 + 仿真后端（默认可编译运行，无需 SDK）
+SRC_FEED_VENDOR := src/feed/MarketFeed.cpp src/feed/CtpMdFeed.cpp src/feed/FemasMdFeed.cpp \
+                   src/feed/ctp/SimCtpMdApi.cpp src/feed/femas/SimFemasMdApi.cpp
+# 真实封装：make feed HAS_CTP=1 / HAS_FEMAS=1 时加入并定义宏（需 third_party/<ctp|femas> SDK）
+ifeq ($(HAS_CTP),1)
+  SRC_FEED_VENDOR += src/feed/ctp/RealCtpMdApi.cpp
+  FEED_DEFS += -DHAS_CTP
+endif
+ifeq ($(HAS_FEMAS),1)
+  SRC_FEED_VENDOR += src/feed/femas/RealFemasMdApi.cpp
+  FEED_DEFS += -DHAS_FEMAS
+endif
 SRC_NET  := src/net/Socket.cpp src/net/MdReceiver.cpp src/net/PacketCapture.cpp src/net/MdServer.cpp src/net/IoMultiplexer.cpp
 SRC_GW   := src/gateway/MdGateway.cpp
 SRC_STRAT:= src/strategy/TickConsumer.cpp
@@ -47,7 +59,7 @@ SRC_CORO := src/coro/AsyncMdServer.cpp
 SRC_NET_CORO := src/net/Socket.cpp src/net/IoMultiplexer.cpp
 # 注：util/ObjectPool.h 为 header-only（模板），无需独立编译单元
 
-.PHONY: all test itest bench demo gateway strategy sched net nettest coro cotest clean
+.PHONY: all test itest bench demo gateway strategy sched net nettest coro cotest feed feedtest clean
 
 all: test itest bench demo gateway strategy sched net nettest
 
@@ -109,6 +121,17 @@ $(BUILD)/cotest$(BIN_EXT): tests/test_coro.cpp $(SRC_CORO) $(SRC_FEED) $(SRC_RIS
 
 coro: $(BUILD)/coro_main$(BIN_EXT)
 cotest: $(BUILD)/cotest$(BIN_EXT)
+	./$<
+
+# --- 真实 CTP/飞马 feed 接入（JD 职责：行情接入 C++ 实现）---
+$(BUILD)/feed_demo$(BIN_EXT): src/feed_demo.cpp $(SRC_FEED_VENDOR) $(SRC_FEED) $(SRC_RISK) | $(BUILD)
+	$(CXX) $(CXXFLAGS) $(FEED_DEFS) src/feed_demo.cpp $(SRC_FEED_VENDOR) $(SRC_FEED) $(SRC_RISK) $(LIBS) -o $@
+
+$(BUILD)/test_feed$(BIN_EXT): tests/test_feed.cpp $(SRC_FEED_VENDOR) $(SRC_FEED) $(SRC_RISK) | $(BUILD)
+	$(CXX) $(CXXFLAGS) $(FEED_DEFS) tests/test_feed.cpp $(SRC_FEED_VENDOR) $(SRC_FEED) $(SRC_RISK) $(LIBS) -o $@
+
+feed: $(BUILD)/feed_demo$(BIN_EXT)
+feedtest: $(BUILD)/test_feed$(BIN_EXT)
 	./$<
 
 clean:

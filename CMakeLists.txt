@@ -37,6 +37,13 @@ set(MON_SRC  src/monitor/Monitor.cpp)
 set(CORO_SRC src/coro/AsyncMdServer.cpp)
 # 协程层只依赖网络抽象（Socket + IoMultiplexer），不引入 MdReceiver/PacketCapture/MdServer
 set(NET_CORO_SRC src/net/Socket.cpp src/net/IoMultiplexer.cpp)
+# 真实 CTP/飞马 feed 接入：统一接口 + 仿真后端（默认可编译运行，无需 SDK）
+set(FEED_VENDOR_SRC
+    src/feed/MarketFeed.cpp
+    src/feed/CtpMdFeed.cpp
+    src/feed/FemasMdFeed.cpp
+    src/feed/ctp/SimCtpMdApi.cpp
+    src/feed/femas/SimFemasMdApi.cpp)
 
 # 单元测试
 add_executable(test_system tests/test_system.cpp ${IPC_SRC} ${FEED_SRC})
@@ -103,3 +110,25 @@ add_executable(cotest
     ${CORO_SRC} ${FEED_SRC} ${RISK_SRC} ${NET_CORO_SRC})
 set_target_properties(cotest PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 add_test(NAME coro_tests COMMAND cotest)
+
+# ---------------------------------------------------------------------------
+# 真实 CTP / 飞马 feed 接入（JD 职责：行情接入 C++ 实现）
+# 默认编译仿真后端（无需 SDK）；定义 HAS_CTP / HAS_FEMAS 时接入真实柜台封装
+# （需把 vendor 头文件/库放到 third_party/<ctp|femas>/ 并链接对应库）。
+# ---------------------------------------------------------------------------
+add_executable(feed_demo src/feed_demo.cpp ${FEED_VENDOR_SRC} ${FEED_SRC} ${RISK_SRC})
+add_executable(test_feed tests/test_feed.cpp ${FEED_VENDOR_SRC} ${FEED_SRC} ${RISK_SRC})
+add_test(NAME feed_tests COMMAND test_feed)
+
+if(HAS_CTP)
+  target_sources(feed_demo PRIVATE src/feed/ctp/RealCtpMdApi.cpp)
+  target_compile_definitions(feed_demo PRIVATE HAS_CTP)
+  target_sources(test_feed PRIVATE src/feed/ctp/RealCtpMdApi.cpp)
+  target_compile_definitions(test_feed PRIVATE HAS_CTP)
+endif()
+if(HAS_FEMAS)
+  target_sources(feed_demo PRIVATE src/feed/femas/RealFemasMdApi.cpp)
+  target_compile_definitions(feed_demo PRIVATE HAS_FEMAS)
+  target_sources(test_feed PRIVATE src/feed/femas/RealFemasMdApi.cpp)
+  target_compile_definitions(test_feed PRIVATE HAS_FEMAS)
+endif()

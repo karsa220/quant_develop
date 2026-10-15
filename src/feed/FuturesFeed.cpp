@@ -61,4 +61,12 @@ bool FuturesFeed::nextFrame(uint8_t* buf, uint32_t* outLen, MarketTick& out, Nan
     return true;
 }
 
+InstrumentId FuturesFeed::symbolToId(const char* symbol) {
+    if (!symbol) return kNumInstruments;
+    for (size_t i = 0; i < kNumInstruments; ++i) {
+        if (std::strcmp(kInstruments[i].symbol, symbol) == 0) return kInstruments[i].id;
+    }
+    return kNumInstruments;   // 未知
+}
+
 }  // namespace md

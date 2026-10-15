@@ -93,13 +93,22 @@ C++17 零依赖实现的低延迟行情链路：**行情采集 → 网关编码 
   - `coro/AsyncMdServer` 把「accept 循环」与「每客户端连接」写成协程，收到 CTP 风格帧 → `RiskControl.checkTick` → 回 ack，全程零锁、单线程调度。
 - **收益**：连接处理代码写成顺序逻辑（`co_await` 串起收/发/等 ack），可读性接近多线程模型，却没有线程切换、无锁竞争；复用既有风控/编解码/延迟统计，latency 端到端可观测。
 
+### 13. 真实 CTP / 飞马 feed 接入（`feed/`，JD 职责：行情接入 C++ 实现）
+- **动机**：JD 要求「行情接入的 C++ 实现」。真实期货行情来自期货公司柜台（CTP 上期技术 / 飞马 等）经 TCP 推送。本项目把柜台 MdApi 收敛到一个统一 `MarketFeed` 接口，使上层（网关 / 风控 / 共享内存环）与「行情从哪来」彻底解耦。
+- **做法**：
+  - `feed/MarketFeed.h`：统一 push 接口（`start` / `stop` / `setOnMarketData`）+ `FeedConfig`（前置地址 / 账号 / 订阅合约 / 仿真开关）；
+  - `feed/ctp/`、`feed/femas/`：各自「镜像」一份与真机一致的方法/回调契约（`CtpMdApi`/`FemasMdApi` + `CtpMdSpi`/`FemasMdSpi`）；`CtpMdFeed`/`FemasMdFeed` 把柜台 `DepthMarketData` 转成内部 `MarketTick`——**double 元价 → int64 tick 价、交易所文本时间 → ns、主动成交方向启发式**——再送 `RiskControl`；
+  - **真实封装只在编译期定义 `HAS_CTP` / `HAS_FEMAS` 时参与编译**（`RealCtpMdApi` / `RealFemasMdApi`，把官方 `CThostFtdcMdApi` / `CFemasMdApi` 翻译进项目契约）；**同时提供进程内仿真后端 `SimCtpMdApi` / `SimFemasMdApi`**，无需 SDK / 账号即可跑通「登录 → 订阅 → 行情 → 风控」。
+- **为什么这样设计**：真实柜台 SDK 是闭源、授权、需账号与 front 地址，无法在仓库 / CI 直接连真机。镜像契约 + 仿真后端是业界标准做法——真机接入只需把 vendor 头文件 / 库就位并定义宏，**上层接入代码零改动**。
+- **收益**：行情接入层可编译、可测试、可演示；CTP 与飞马可同时接入、共用同一套风控与下游；`test_feed` 覆盖转换工具 + 仿真集成（22 checks 全过）。
+
 ---
 
 ## JD 能力对照（量化交易系统 C++ 开发实习）
 
 | JD 要求 / 职责 | 本项目对应实现 |
 |---|---|
-| 行情接入（C++ 实现） | `MdReceiver`（UDP/TCP 收包）、`PcapCapture`（链路层抓包）、`FuturesFeed`（合成行情源） |
+| 行情接入（C++ 实现） | `MdReceiver`（UDP/TCP 收包）、`PcapCapture`（链路层抓包）、`FuturesFeed`（合成源）；**真实柜台 `CtpMdFeed`/`FemasMdFeed`（统一 `MarketFeed` 接口，仿真后端可编译可测，真机定义 HAS_CTP/HAS_FEMAS 接入）** |
 | 策略执行 | `TickConsumer`：解码 → 重建盘口 → 反转信号生成 → 下单前 `RiskControl.checkOrder` |
 | 风控模块 | `RiskControl`：价格/时效/持仓/频率校验 + 熔断 kill-switch |
 | 性能分析与瓶颈排查、降低延迟 | `LatencyRecorder` 分位延迟、`bench_main` 对照（无锁 vs 互斥）、cache-line 隔离、`Monitor` 看门狗定位卡顿/丢弃 |
@@ -129,6 +138,7 @@ C++17 零依赖实现的低延迟行情链路：**行情采集 → 网关编码 
 | 集成测试 | 端到端 95 断言全过：零丢失(20w ticks)、背压(小环丢 38k)、看门狗告警(3 次)、熔断 HALT、持仓限额拒绝、对象池并发 4w 操作 |
 | 单测 | 985,044 次断言全过 + 网络层 23 项断言全过 + 协程 14 checks 全过 |
 | 协程异步服务 | 单线程事件循环：8 客户端 × 5000 ticks（40,000）零丢失、零拒绝、ack 全回；客户端 RTT p50≈110µs / p99≈139µs |
+| 行情接入（CTP/飞马仿真） | `test_feed` 22 checks 全过：价格/时间/方向转换单测 + 仿真登录→订阅→行情→风控；1.2s 收到 CTP 103 / 飞马 96 ticks，零未知合约、零丢失 |
 
 ---
 
@@ -159,6 +169,12 @@ perf record -g ./build/bench_main && perf report
 make coro     # 演示：单线程事件循环驱动 8 客户端 × 5000 ticks，收 CTP tick→风控→回 ack
 make cotest   # 单元+集成测试：Generator / Task 组合 + 异步服务 14 checks 全过
 # 或 CMake: 同上会自动构建 coro_main / cotest，并 `ctest` 包含 coro_tests
+
+# 真实 CTP / 飞马 feed 接入（JD 职责：行情接入 C++ 实现）
+make feed     # 演示：CTP + 飞马 同时接入，登录→订阅→行情→风控（默认仿真，无需 SDK）
+make feedtest # 单元+集成测试：转换工具 + 仿真登录/订阅/行情，22 checks 全过
+# 接真机：把 vendor 头文件/库放到 third_party/<ctp|femas>/，再
+#   make feed HAS_CTP=1  （或 cmake -DHAS_CTP=ON）；FeedConfig.simul.... 设为 false
 ```
 > 本机无原生 C++ 编译器时用 `make CXX="python -m ziglang c++"`（zig 内置 clang，支持 C++20）。
 
@@ -168,16 +184,17 @@ make cotest   # 单元+集成测试：Generator / Task 组合 + 异步服务 14 
 
 ```
 include/  common(Types) shm(mmap) ipc(SpscRingBuffer)
-          feed(FuturesFeed,CtpLikeCodec) sched(PeriodicTimer) bench(LatencyRecorder)
+          feed(MarketFeed,FuturesFeed,CtpLikeCodec,CtpMdFeed,FemasMdFeed,ctp/,femas/) sched(PeriodicTimer) bench(LatencyRecorder)
           gateway(MdGateway) strategy(TickConsumer)
           risk(RiskControl) monitor(Monitor)
           util(ObjectPool) net(Socket,MdReceiver,PacketCapture,MdServer,IoMultiplexer,WireParse,JsonBook)
           coro(Coroutine,EventLoop,AsyncMdServer)
-src/      demo_pipeline gateway_main strategy_main bench_main sched_main net_demo coro_main
+src/      demo_pipeline gateway_main strategy_main bench_main sched_main net_demo coro_main feed_demo
           gateway/MdGateway strategy/TickConsumer risk/RiskControl monitor/Monitor
           net/(Socket,MdReceiver,PacketCapture,MdServer,IoMultiplexer).cpp
           coro/AsyncMdServer.cpp
-tests/    test_system.cpp  test_net.cpp  test_integration.cpp  test_coro.cpp
+          feed/(MarketFeed,CtpMdFeed,FemasMdFeed).cpp ctp/SimCtpMdApi.cpp femas/SimFemasMdApi.cpp
+tests/    test_system.cpp  test_net.cpp  test_integration.cpp  test_coro.cpp  test_feed.cpp
 scripts/  md-gateway.service  daily_snapshot.cron  snapshot.sh
 docs/     quant-knowledge-checklist.md（金融/统计/C++ 工程面试知识）
 ```
