@@ -16,6 +16,8 @@
 #   make sched      # Linux 定时任务演示（09:30/15:00 会话 + 心跳）
 #   make net        # 网络采集/抓包/多协议接口演示
 #   make nettest    # 网络层单元测试
+#   make coro       # C++20 协程异步行情服务演示（单线程事件循环 + 低延迟回环）
+#   make cotest     # C++20 协程单元/集成测试（Generator/Task + 异步服务）
 #   make clean
 # ============================================================================
 
@@ -29,6 +31,8 @@ endif
 
 CXX      ?= clang++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -Iinclude
+# 协程模块需用 C++20（co_await/co_yield/协程句柄）。zig 内置 clang 21 与 MSVC 19.4x+ 均支持。
+CXXFLAGS_CORO ?= -std=c++20 -O2 -Wall -Wextra -Iinclude
 BUILD    := build
 
 SRC_IPC  := src/ipc/SpscRingBuffer.cpp src/shm/ShmSegment.cpp src/sched/PeriodicTimer.cpp
@@ -38,9 +42,12 @@ SRC_GW   := src/gateway/MdGateway.cpp
 SRC_STRAT:= src/strategy/TickConsumer.cpp
 SRC_RISK := src/risk/RiskControl.cpp
 SRC_MON  := src/monitor/Monitor.cpp
+SRC_CORO := src/coro/AsyncMdServer.cpp
+# 协程层只依赖网络抽象（Socket + IoMultiplexer），不引入 MdReceiver/PacketCapture/MdServer
+SRC_NET_CORO := src/net/Socket.cpp src/net/IoMultiplexer.cpp
 # 注：util/ObjectPool.h 为 header-only（模板），无需独立编译单元
 
-.PHONY: all test itest bench demo gateway strategy sched net nettest clean
+.PHONY: all test itest bench demo gateway strategy sched net nettest coro cotest clean
 
 all: test itest bench demo gateway strategy sched net nettest
 
@@ -91,6 +98,17 @@ strategy: $(BUILD)/strategy_main$(BIN_EXT)
 sched: $(BUILD)/sched_main$(BIN_EXT)
 net: $(BUILD)/net_demo$(BIN_EXT)
 nettest: $(BUILD)/test_net$(BIN_EXT)
+	./$<
+
+# --- C++20 协程（JD 加分项：协程 / 无锁队列 / 内存池）---
+$(BUILD)/coro_main$(BIN_EXT): src/coro_main.cpp $(SRC_CORO) $(SRC_FEED) $(SRC_RISK) $(SRC_NET_CORO) | $(BUILD)
+	$(CXX) $(CXXFLAGS_CORO) src/coro_main.cpp $(SRC_CORO) $(SRC_FEED) $(SRC_RISK) $(SRC_NET_CORO) $(LIBS) -o $@
+
+$(BUILD)/cotest$(BIN_EXT): tests/test_coro.cpp $(SRC_CORO) $(SRC_FEED) $(SRC_RISK) $(SRC_NET_CORO) | $(BUILD)
+	$(CXX) $(CXXFLAGS_CORO) tests/test_coro.cpp $(SRC_CORO) $(SRC_FEED) $(SRC_RISK) $(SRC_NET_CORO) $(LIBS) -o $@
+
+coro: $(BUILD)/coro_main$(BIN_EXT)
+cotest: $(BUILD)/cotest$(BIN_EXT)
 	./$<
 
 clean:

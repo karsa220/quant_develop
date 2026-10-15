@@ -13,12 +13,15 @@
 
 #ifdef _WIN32
 #  include <winsock2.h>
+#endif
+
+namespace md { namespace net {
+
+#ifdef _WIN32
    typedef SOCKET mux_fd_t;
 #else
    typedef int mux_fd_t;
 #endif
-
-namespace md { namespace net {
 
 class IoMultiplexer {
 public:

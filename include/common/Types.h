@@ -9,6 +9,7 @@
 // ============================================================================
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
 
 namespace md {
 
@@ -114,7 +115,7 @@ inline size_t writeMessage(uint8_t* buf, MsgType type, Seq seq,
     h->srcTs = srcTs;
     h->gwTs  = gwTs;
     if (payload && payloadLen) {
-        __builtin_memcpy(buf + sizeof(MsgHeader), payload, payloadLen);
+        ::memcpy(buf + sizeof(MsgHeader), payload, payloadLen);
     }
     return sizeof(MsgHeader) + payloadLen;
 }

@@ -1,4 +1,4 @@
-# 低延迟期货行情数据链路（C++17）
+# 低延迟期货行情数据链路（C++17 主线 + C++20 协程模块）
 
 C++17 零依赖实现的低延迟行情链路：**行情采集 → 网关编码 → 共享内存零拷贝 → 跨进程无锁消费 → 策略信号**。
 面向量化私募 / 高频交易（HFT）C++ 岗，覆盖真实生产链路的关键模块：mmap 共享内存、无锁环形队列、timerfd 调度、二进制协议、性能基准。
@@ -84,6 +84,15 @@ C++17 零依赖实现的低延迟行情链路：**行情采集 → 网关编码 
 - **做法**：Linux 生产路径用 `epoll`（O(1) 就绪通知，支撑上万并发连接），Windows 用 `WSAPoll` 提供等价能力；`MdServer` 监听口注册到多路复用器，`accept` 前先 `wait()` 确认可读，纳入 reactor 事件循环，避免阻塞。
 - **收益**：单线程即可驱动大量连接，是「高并发网络 + 零拷贝」的基础设施。
 
+### 12. C++20 协程异步事件循环（`coro/`，JD 加分项：协程）
+- **动机**：高并发行情服务既要「每连接一个处理逻辑」的清晰写法，又要避免线程/锁带来的上下文切换与竞争开销。协程把两者统一：单线程 reactor 上「一连接一协程」，`co_await` 等 socket 可读/可写时让出，由事件循环在就绪后原地续跑。
+- **做法**：
+  - 底层复用现有 `net::IoMultiplexer`（Linux `epoll` / Windows `WSAPoll`）做就绪通知，**不引入新线程**；
+  - `coro/Coroutine.h` 实现 `Task<T>`/`Task<void>`/`Generator<T>` 三个基础原语（`promise_type` + 自定义 `Awaiter`，兼容 MSVC/clang）；
+  - `coro/EventLoop.h` 把 fd 注册进多路复用器，`co_await loop.read(fd)` / `co_await loop.write(fd)` 在不可读/写时挂起，就绪后 `resume()`；
+  - `coro/AsyncMdServer` 把「accept 循环」与「每客户端连接」写成协程，收到 CTP 风格帧 → `RiskControl.checkTick` → 回 ack，全程零锁、单线程调度。
+- **收益**：连接处理代码写成顺序逻辑（`co_await` 串起收/发/等 ack），可读性接近多线程模型，却没有线程切换、无锁竞争；复用既有风控/编解码/延迟统计，latency 端到端可观测。
+
 ---
 
 ## JD 能力对照（量化交易系统 C++ 开发实习）
@@ -103,7 +112,7 @@ C++17 零依赖实现的低延迟行情链路：**行情采集 → 网关编码 
 | TCP/IP·UDP·socket·零拷贝·epoll | `net/` 全模块 + `IoMultiplexer`（epoll/WSAPoll）+ mmap 零拷贝 |
 | 算法与数据结构 | 环形缓冲（O(1)）、Treiber 栈（无锁）、令牌桶（限流）、定长协议解析 |
 | 加分：量化/HFT/做市经验 | 期货行情链路、低延迟、跨进程零丢失、熔断/监控 |
-| 加分：协程·无锁队列·内存池·对象池 | 无锁 SPSC 队列、无锁对象池（已含）；协程可后续接入 |
+| 加分：协程·无锁队列·内存池·对象池 | 无锁 SPSC 队列、无锁对象池（已含）；**C++20 协程事件循环（`coro/`）已落地**：单线程驱动「服务器协程+多客户端协程」收 CTP tick→风控→回 ack |
 
 ---
 
@@ -118,7 +127,8 @@ C++17 零依赖实现的低延迟行情链路：**行情采集 → 网关编码 
 | 跨进程 mmap | 13,236,632 发布 = 13,236,632 消费，零丢失 |
 | 网络层回环 | UDP 80k+ 报文收发、0 坏帧、ring 0 丢弃；HTTP `/snapshot` 返回正确 JSON |
 | 集成测试 | 端到端 95 断言全过：零丢失(20w ticks)、背压(小环丢 38k)、看门狗告警(3 次)、熔断 HALT、持仓限额拒绝、对象池并发 4w 操作 |
-| 单测 | 985,044 次断言全过 + 网络层 23 项断言全过 |
+| 单测 | 985,044 次断言全过 + 网络层 23 项断言全过 + 协程 14 checks 全过 |
+| 协程异步服务 | 单线程事件循环：8 客户端 × 5000 ticks（40,000）零丢失、零拒绝、ack 全回；客户端 RTT p50≈110µs / p99≈139µs |
 
 ---
 
@@ -144,7 +154,13 @@ curl http://127.0.0.1:8080/book?sym=IF     # 看单合约
 # Linux 下用 perf 定位热点（JD 要求的性能分析工具）
 perf record -g ./build/bench_main && perf report
 ```
-> 本机无原生 C++ 编译器时用 `make CXX="python -m ziglang c++"`（zig 内置 clang）。
+
+# C++20 协程异步行情服务（JD 加分项：协程）
+make coro     # 演示：单线程事件循环驱动 8 客户端 × 5000 ticks，收 CTP tick→风控→回 ack
+make cotest   # 单元+集成测试：Generator / Task 组合 + 异步服务 14 checks 全过
+# 或 CMake: 同上会自动构建 coro_main / cotest，并 `ctest` 包含 coro_tests
+```
+> 本机无原生 C++ 编译器时用 `make CXX="python -m ziglang c++"`（zig 内置 clang，支持 C++20）。
 
 ---
 
@@ -156,10 +172,12 @@ include/  common(Types) shm(mmap) ipc(SpscRingBuffer)
           gateway(MdGateway) strategy(TickConsumer)
           risk(RiskControl) monitor(Monitor)
           util(ObjectPool) net(Socket,MdReceiver,PacketCapture,MdServer,IoMultiplexer,WireParse,JsonBook)
-src/      demo_pipeline gateway_main strategy_main bench_main sched_main net_demo
+          coro(Coroutine,EventLoop,AsyncMdServer)
+src/      demo_pipeline gateway_main strategy_main bench_main sched_main net_demo coro_main
           gateway/MdGateway strategy/TickConsumer risk/RiskControl monitor/Monitor
           net/(Socket,MdReceiver,PacketCapture,MdServer,IoMultiplexer).cpp
-tests/    test_system.cpp  test_net.cpp  test_integration.cpp
+          coro/AsyncMdServer.cpp
+tests/    test_system.cpp  test_net.cpp  test_integration.cpp  test_coro.cpp
 scripts/  md-gateway.service  daily_snapshot.cron  snapshot.sh
 docs/     quant-knowledge-checklist.md（金融/统计/C++ 工程面试知识）
 ```

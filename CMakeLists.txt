@@ -34,6 +34,9 @@ set(GW_SRC   src/gateway/MdGateway.cpp)
 set(STRAT_SRC src/strategy/TickConsumer.cpp)
 set(RISK_SRC src/risk/RiskControl.cpp)
 set(MON_SRC  src/monitor/Monitor.cpp)
+set(CORO_SRC src/coro/AsyncMdServer.cpp)
+# 协程层只依赖网络抽象（Socket + IoMultiplexer），不引入 MdReceiver/PacketCapture/MdServer
+set(NET_CORO_SRC src/net/Socket.cpp src/net/IoMultiplexer.cpp)
 
 # 单元测试
 add_executable(test_system tests/test_system.cpp ${IPC_SRC} ${FEED_SRC})
@@ -81,7 +84,22 @@ add_executable(net_demo
 
 # Windows 需要链接 Winsock2
 if(WIN32)
-  foreach(t net_demo test_net)
+  foreach(t net_demo test_net coro_main cotest)
     target_link_libraries(${t} ws2_32)
   endforeach()
 endif()
+
+# ---------------------------------------------------------------------------
+# C++20 协程模块（JD 加分项：协程 / 无锁队列 / 内存池 / 对象池）
+# 单线程事件循环驱动「服务器协程 + 多客户端协程」：收 CTP 风格 tick → 风控 → 回 ack
+# ---------------------------------------------------------------------------
+add_executable(coro_main
+    src/coro_main.cpp
+    ${CORO_SRC} ${FEED_SRC} ${RISK_SRC} ${NET_CORO_SRC})
+set_target_properties(coro_main PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+add_executable(cotest
+    tests/test_coro.cpp
+    ${CORO_SRC} ${FEED_SRC} ${RISK_SRC} ${NET_CORO_SRC})
+set_target_properties(cotest PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+add_test(NAME coro_tests COMMAND cotest)

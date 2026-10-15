@@ -14,18 +14,23 @@
 #ifdef _WIN32
 #  include <winsock2.h>
 #  include <ws2tcpip.h>
-   typedef SOCKET sockfd_t;
-#  define MD_INVALID_SOCKET INVALID_SOCKET
 #else
 #  include <sys/socket.h>
 #  include <netinet/in.h>
 #  include <arpa/inet.h>
 #  include <unistd.h>
-   typedef int sockfd_t;
-#  define MD_INVALID_SOCKET (-1)
 #endif
 
 namespace md { namespace net {
+
+// 句柄类型必须在 md::net 内定义，外部才能用 net::sockfd_t 引用
+#ifdef _WIN32
+   typedef SOCKET sockfd_t;
+#  define MD_INVALID_SOCKET INVALID_SOCKET
+#else
+   typedef int sockfd_t;
+#  define MD_INVALID_SOCKET (-1)
+#endif
 
 // 进程内只需调用一次（Windows 需要 WSAStartup）
 bool sock_init();
